@@ -20,7 +20,12 @@ train_pipeline = [
     dict(type='Resize', scale=crop_size, keep_ratio=False),
     dict(type='PackSegInputs')
 ]
-test_pipeline = train_pipeline
+test_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='Resize', scale=crop_size, keep_ratio=False),
+    dict(type='LoadAnnotations'),
+    dict(type='PackSegInputs')
+]
 
 train_dataloader = dict(
     batch_size=1,

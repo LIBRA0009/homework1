@@ -1,6 +1,6 @@
 matplotlib
-numpy
+numpy<2
 packaging
 prettytable
 scipy
-setuptools
+setuptools<81
