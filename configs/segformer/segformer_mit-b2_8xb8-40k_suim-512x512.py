@@ -1,11 +1,17 @@
 _base_ = [
-    './segformer_mit-b0_8xb2-160k_ade20k-512x512.py',
-    '../_base_/datasets/suim_512x512.py'
+    '../_base_/models/segformer_mit-b0.py',
+    '../_base_/datasets/suim_512x512.py',
+    '../_base_/default_runtime.py',
+    '../_base_/schedules/schedule_160k.py'
 ]
+
+crop_size = (512, 512)
+data_preprocessor = dict(size=crop_size)
 
 checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b2_20220624-66e8bf70.pth'  # noqa
 
 model = dict(
+    data_preprocessor=data_preprocessor,
     backbone=dict(
         init_cfg=dict(type='Pretrained', checkpoint=checkpoint),
         embed_dims=64,
@@ -20,7 +26,7 @@ default_hooks = dict(
 
 train_dataloader = dict(batch_size=8, num_workers=4)
 val_dataloader = dict(batch_size=1, num_workers=4)
-test_dataloader = val_dataloader
+test_dataloader = dict(batch_size=1, num_workers=4)
 
 optim_wrapper = dict(
     _delete_=True,
