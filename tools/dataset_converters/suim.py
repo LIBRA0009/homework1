@@ -15,7 +15,7 @@ from collections import Counter
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
-from mmengine.utils import mkdir_or_exist
+from mmengine.utils import ProgressBar, mkdir_or_exist
 from PIL import Image
 
 try:
@@ -110,28 +110,26 @@ def ensure_dirs(out_dir: str, dry_run: bool) -> None:
 
 def convert_color_mask(mask: np.ndarray, max_dist: float,
                        ignore_index: int) -> Tuple[np.ndarray, int, Counter]:
-    flat = mask.reshape(-1, 3).astype(np.int32)
-    diff = flat[:, None, :] - SUIM_PALETTE[None, :, :]
+    flat = mask.reshape(-1, 3)
+    colors, inverse = np.unique(flat, axis=0, return_inverse=True)
+
+    diff = colors.astype(np.int32)[:, None, :] - SUIM_PALETTE[None, :, :]
     dist2 = np.sum(diff * diff, axis=2)
     nearest = np.argmin(dist2, axis=1).astype(np.uint8)
     min_dist2 = dist2[np.arange(dist2.shape[0]), nearest]
     unknown = min_dist2 > max_dist * max_dist
 
-    labels = nearest
-    labels[unknown] = ignore_index
-    labels = labels.reshape(mask.shape[:2])
+    color_labels = nearest
+    color_labels[unknown] = ignore_index
+    labels = color_labels[inverse].reshape(mask.shape[:2])
 
     exact_palette = min_dist2 == 0
-    snapped = int(np.count_nonzero(~exact_palette & ~unknown))
-    unknown_count = int(np.count_nonzero(unknown))
+    color_counts = np.bincount(inverse, minlength=len(colors))
+    snapped = int(color_counts[~exact_palette & ~unknown].sum())
+    unknown_count = int(color_counts[unknown].sum())
 
     label_counts = Counter(labels.reshape(-1).tolist())
     return labels.astype(np.uint8), snapped, unknown_count, label_counts
-
-
-def save_png_image(src_path: str, dst_path: str) -> None:
-    image = Image.open(src_path).convert('RGB')
-    image.save(dst_path)
 
 
 def clean_train_val(args) -> Dict:
@@ -155,39 +153,51 @@ def clean_train_val(args) -> Dict:
         'label_counts': Counter(),
     }
 
+    print(f'Converting train_val: {len(stems)} image/mask entries')
+    progress_bar = ProgressBar(len(stems))
     for stem in stems:
         img_path = images.get(stem)
         mask_path = masks.get(stem)
         if img_path is None:
             report['missing_image'].append(stem)
+            progress_bar.update()
             continue
         if mask_path is None:
             report['missing_mask'].append(stem)
+            progress_bar.update()
             continue
 
         image = Image.open(img_path).convert('RGB')
         mask_image = Image.open(mask_path).convert('RGB')
-        if image.size != mask_image.size:
-            mismatch = {
-                'stem': stem,
-                'image_size': list(image.size),
-                'mask_size': list(mask_image.size),
-            }
-            report['size_mismatch'].append(mismatch)
-            if args.size_policy == 'skip':
-                continue
-            mask_image = mask_image.resize(image.size, RESAMPLE_NEAREST)
+        try:
+            if image.size != mask_image.size:
+                mismatch = {
+                    'stem': stem,
+                    'image_size': list(image.size),
+                    'mask_size': list(mask_image.size),
+                }
+                report['size_mismatch'].append(mismatch)
+                if args.size_policy == 'skip':
+                    progress_bar.update()
+                    continue
+                mask_image = mask_image.resize(image.size, RESAMPLE_NEAREST)
 
-        labels, snapped, ignored, counts = convert_color_mask(
-            np.asarray(mask_image), args.max_color_distance, args.ignore_index)
-        report['snapped_pixels'] += snapped
-        report['ignored_pixels'] += ignored
-        report['label_counts'].update(counts)
+            labels, snapped, ignored, counts = convert_color_mask(
+                np.asarray(mask_image), args.max_color_distance,
+                args.ignore_index)
+            report['snapped_pixels'] += snapped
+            report['ignored_pixels'] += ignored
+            report['label_counts'].update(counts)
 
-        if not args.dry_run:
-            image.save(osp.join(out_img_dir, stem + '.png'))
-            Image.fromarray(labels).save(osp.join(out_ann_dir, stem + '.png'))
-        report['written'] += 1
+            if not args.dry_run:
+                image.save(osp.join(out_img_dir, stem + '.png'))
+                Image.fromarray(labels).save(
+                    osp.join(out_ann_dir, stem + '.png'))
+            report['written'] += 1
+            progress_bar.update()
+        finally:
+            image.close()
+            mask_image.close()
 
     return report
 
@@ -206,7 +216,11 @@ def combine_binary_test_masks(mask_root: str, stem: str,
         ]
         if not candidates:
             continue
-        binary = np.asarray(Image.open(candidates[0]).convert('L')) > 0
+        mask_image = Image.open(candidates[0]).convert('L')
+        try:
+            binary = np.asarray(mask_image) > 0
+        finally:
+            mask_image.close()
         if binary.shape != shape:
             binary = np.asarray(
                 Image.fromarray(binary.astype(np.uint8) * 255).resize(
@@ -234,6 +248,8 @@ def convert_test(args) -> Optional[Dict]:
         'overlap_pixels': 0,
     }
 
+    print(f'Converting TEST: {len(test_images)} images')
+    progress_bar = ProgressBar(len(test_images))
     for img_path in test_images:
         stem = osp.splitext(osp.basename(img_path))[0]
         image = Image.open(img_path).convert('RGB')
@@ -254,6 +270,7 @@ def convert_test(args) -> Optional[Dict]:
                 Image.fromarray(label).save(
                     osp.join(out_ann_dir, stem + '.png'))
             report['masks_written'] += 1
+        progress_bar.update()
 
     return report
 
