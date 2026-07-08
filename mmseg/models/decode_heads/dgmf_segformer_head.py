@@ -10,10 +10,15 @@ from .segformer_head import SegformerHead
 
 
 class DGMFBlock(nn.Module):
-    """Depth-geometric modulation fusion block."""
+    """Conservative depth-geometric modulation fusion block."""
 
-    def __init__(self, channels, norm_cfg=None, act_cfg=dict(type='ReLU')):
+    def __init__(self,
+                 channels,
+                 residual_scale=0.1,
+                 norm_cfg=None,
+                 act_cfg=dict(type='ReLU')):
         super().__init__()
+        self.residual_scale = residual_scale
         self.avg_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
         self.depth_proj = ConvModule(
             1,
@@ -36,8 +41,14 @@ class DGMFBlock(nn.Module):
             padding=1,
             norm_cfg=norm_cfg,
             act_cfg=act_cfg)
+        self.fusion_proj = ConvModule(
+            channels * 3,
+            channels,
+            kernel_size=1,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
         self.gate = nn.Sequential(
-            nn.Conv2d(channels * 4, channels, kernel_size=1),
+            nn.Conv2d(channels * 2, channels, kernel_size=1),
             nn.Sigmoid())
 
         sobel_x = torch.tensor(
@@ -61,10 +72,11 @@ class DGMFBlock(nn.Module):
         depth_feat = self.depth_proj(depth)
         geometry_feat = self.geometry_proj(torch.abs(x - self.avg_pool(x)))
         depth_edge_feat = self.depth_edge_proj(self._depth_edge(depth))
-        gate = self.gate(
-            torch.cat([x, depth_feat, geometry_feat, depth_edge_feat], dim=1))
+        fusion_feat = self.fusion_proj(
+            torch.cat([depth_feat, geometry_feat, depth_edge_feat], dim=1))
+        gate = self.gate(torch.cat([x, fusion_feat], dim=1))
 
-        return x + gate * depth_feat + (1.0 - gate) * geometry_feat
+        return x + self.residual_scale * gate * fusion_feat
 
 
 @MODELS.register_module()
@@ -75,7 +87,7 @@ class DGMFSegformerHead(SegformerHead):
     depth is the fourth input channel after preprocessing.
     """
 
-    def __init__(self, fusion_indices=(2, 3), **kwargs):
+    def __init__(self, fusion_indices=(2, 3), residual_scale=0.1, **kwargs):
         super().__init__(**kwargs)
         self.fusion_indices = set(fusion_indices)
 
@@ -84,6 +96,7 @@ class DGMFSegformerHead(SegformerHead):
             assert 0 <= idx < len(self.in_channels)
             self.dgmf_blocks[str(idx)] = DGMFBlock(
                 self.in_channels[idx],
+                residual_scale=residual_scale,
                 norm_cfg=self.norm_cfg,
                 act_cfg=self.act_cfg)
 

@@ -27,7 +27,8 @@ model = dict(
         type='DGMFSegformerHead',
         num_classes=8,
         in_channels=[64, 128, 320, 512],
-        fusion_indices=(2, 3)))
+        fusion_indices=(2, 3),
+        residual_scale=0.1))
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),
