@@ -7,6 +7,7 @@ from .da_head import DAHead
 from .ddr_head import DDRHead
 from .dm_head import DMHead
 from .dnl_head import DNLHead
+from .dgmf_segformer_head import DGMFSegformerHead
 from .dpt_head import DPTHead
 from .ema_head import EMAHead
 from .enc_head import EncHead
@@ -46,5 +47,5 @@ __all__ = [
     'SegformerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
     'KernelUpdateHead', 'KernelUpdator', 'MaskFormerHead', 'Mask2FormerHead',
     'LightHamHead', 'PIDHead', 'DDRHead', 'VPDDepthHead', 'SideAdapterCLIPHead',
-    'GeometrySegformerHead'
+    'GeometrySegformerHead', 'DGMFSegformerHead'
 ]
