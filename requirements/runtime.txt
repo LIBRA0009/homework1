@@ -1,6 +1,9 @@
 matplotlib
 numpy<2
+opencv-python
 packaging
+pillow
 prettytable
 scipy
 setuptools<81
+tqdm
