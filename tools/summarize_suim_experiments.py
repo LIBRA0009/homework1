@@ -243,6 +243,22 @@ def write_summary_csv(results, out_dir):
     return path
 
 
+def write_leaderboard_csv(results, out_dir):
+    path = out_dir / 'leaderboard_best_miou.csv'
+    rows = sorted(results.values(), key=lambda item: item['mIoU'], reverse=True)
+    with path.open('w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['rank', 'method', 'best_iter', 'mIoU', 'mDice', 'mAcc', 'aAcc', 'source'])
+        for rank, item in enumerate(rows, 1):
+            writer.writerow([
+                rank, item['method'], item.get('best_iter', ''),
+                item.get('mIoU', ''), item.get('mDice', ''),
+                item.get('mAcc', ''), item.get('aAcc', ''),
+                item.get('source', ''),
+            ])
+    return path
+
+
 def write_per_class_csv(results, out_dir):
     path = out_dir / 'per_class_iou.csv'
     with path.open('w', encoding='utf-8-sig', newline='') as f:
@@ -314,6 +330,16 @@ def write_markdown(results, out_dir):
     text = [
         '# SUIM Experiment Tables',
         '',
+        '## Best mIoU Leaderboard',
+        md_table(
+            ['Rank', 'Method', 'Best Iter', 'mIoU', 'mDice', 'mAcc', 'aAcc'],
+            [[
+                idx + 1, item['method'], item.get('best_iter', ''),
+                f"{item['mIoU']:.2f}", f"{item['mDice']:.2f}",
+                f"{item['mAcc']:.2f}", f"{item['aAcc']:.2f}"
+            ] for idx, item in enumerate(
+                sorted(results.values(), key=lambda x: x['mIoU'], reverse=True))]),
+        '',
         '## Overall Metrics',
         md_table(['Method', 'Best Iter', 'mIoU', 'mDice', 'mAcc', 'aAcc', 'Delta mIoU'], summary_rows),
         '',
@@ -337,11 +363,24 @@ def try_import_matplotlib():
         return None
 
 
-def plot_bar(plt, labels, values, title, ylabel, out_file, color='#4C78A8'):
+def plot_bar(
+        plt,
+        labels,
+        values,
+        title,
+        ylabel,
+        out_file,
+        color='#4C78A8',
+        y_min=None,
+        y_max=None):
     plt.figure(figsize=(8, 4.5))
     bars = plt.bar(labels, values, color=color)
     plt.title(title)
     plt.ylabel(ylabel)
+    if y_min is not None or y_max is not None:
+        plt.ylim(
+            y_min if y_min is not None else min(values),
+            y_max if y_max is not None else max(values))
     plt.xticks(rotation=20, ha='right')
     for bar, value in zip(bars, values):
         plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f'{value:.2f}',
@@ -361,8 +400,20 @@ def write_plots(results, curves, out_dir):
     labels = [item['method'] for item in ordered]
 
     miou_path = out_dir / 'fig_miou_bar.png'
-    plot_bar(plt, labels, [item['mIoU'] for item in ordered], 'mIoU Comparison', 'mIoU (%)', miou_path)
+    miou_values = [item['mIoU'] for item in ordered]
+    plot_bar(plt, labels, miou_values, 'Best mIoU Comparison', 'mIoU (%)', miou_path)
     paths.append(miou_path)
+    miou_zoom_path = out_dir / 'fig_best_miou_zoom.png'
+    plot_bar(
+        plt,
+        labels,
+        miou_values,
+        'Best mIoU Comparison (Zoomed)',
+        'mIoU (%)',
+        miou_zoom_path,
+        y_min=max(0, min(miou_values) - 0.25),
+        y_max=max(miou_values) + 0.25)
+    paths.append(miou_zoom_path)
 
     if 'RGB baseline' in results:
         base = results['RGB baseline']['mIoU']
@@ -419,13 +470,22 @@ def svg_text(x, y, text, size=12, anchor='middle', weight='normal'):
         f'font-family="Arial" font-weight="{weight}">{text}</text>')
 
 
-def write_simple_bar_svg(labels, values, title, ylabel, out_file, baseline=None):
+def write_simple_bar_svg(
+        labels,
+        values,
+        title,
+        ylabel,
+        out_file,
+        baseline=None,
+        y_min=None,
+        y_max=None):
     width, height = 920, 520
     margin_l, margin_r, margin_t, margin_b = 80, 30, 70, 120
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_t - margin_b
-    max_v = max(values + ([baseline] if baseline is not None else [0]))
-    min_v = min(values + ([baseline] if baseline is not None else [0]) + [0])
+    all_values = values + ([baseline] if baseline is not None else [])
+    max_v = y_max if y_max is not None else max(all_values + [0])
+    min_v = y_min if y_min is not None else min(all_values + [0])
     if abs(max_v - min_v) < 1e-6:
         max_v += 1.0
     scale = plot_h / (max_v - min_v)
@@ -447,7 +507,6 @@ def write_simple_bar_svg(labels, values, title, ylabel, out_file, baseline=None)
     for idx, (label, value) in enumerate(zip(labels, values)):
         cx = margin_l + (idx + 0.5) * plot_w / len(labels)
         y = margin_t + (max_v - value) * scale
-        zero_y = margin_t + (max_v - 0) * scale
         base_y = margin_t + (max_v - max(min_v, 0)) * scale
         rect_y = min(y, base_y)
         rect_h = abs(base_y - y)
@@ -541,11 +600,21 @@ def write_curve_svg(method, curve, out_file):
 def write_svg_plots(results, curves, out_dir):
     ordered = sorted_results(results)
     labels = [item['method'] for item in ordered]
+    miou_values = [item['mIoU'] for item in ordered]
     paths = []
     paths.append(write_simple_bar_svg(
-        labels, [item['mIoU'] for item in ordered], 'mIoU Comparison',
+        labels, miou_values, 'Best mIoU Comparison',
         'mIoU (%)', out_dir / 'fig_miou_bar.svg',
         baseline=results.get('RGB baseline', {}).get('mIoU')))
+    paths.append(write_simple_bar_svg(
+        labels,
+        miou_values,
+        'Best mIoU Comparison (Zoomed)',
+        'mIoU (%)',
+        out_dir / 'fig_best_miou_zoom.svg',
+        baseline=results.get('RGB baseline', {}).get('mIoU'),
+        y_min=max(0, min(miou_values) - 0.25),
+        y_max=max(miou_values) + 0.25))
     if 'RGB baseline' in results:
         base = results['RGB baseline']['mIoU']
         paths.append(write_simple_bar_svg(
@@ -586,6 +655,7 @@ def main():
     results, curves = collect_results(args.work_dirs, include_known=not args.no_known)
     written = [
         write_summary_csv(results, out_dir),
+        write_leaderboard_csv(results, out_dir),
         write_per_class_csv(results, out_dir),
         write_delta_csv(results, out_dir),
         write_markdown(results, out_dir),
